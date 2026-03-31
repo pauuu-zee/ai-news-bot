@@ -100,7 +100,7 @@ def main():
     webhook_url = os.environ["SLACK_WEBHOOK_URL"]
 
     print("뉴스 수집 중...")
-    articles = fetch_recent_articles(hours=12)
+    articles = fetch_recent_articles(hours=24)
     print(f"{len(articles)}개 기사 수집됨")
 
     if not articles:
