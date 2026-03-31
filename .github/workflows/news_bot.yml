@@ -2,8 +2,8 @@ name: AI News Bot
 
 on:
   schedule:
-    - cron: '0 23 * * *'   # 한국시간 오전 8시 (UTC 23:00 전날)
-    - cron: '0 9 * * *'    # 한국시간 오후 6시 (UTC 09:00)
+    - cron: '0 15 * * *'   # 한국시간 오전 8시 (UTC 23:00 전날)
+    - cron: '0 5 * * *'    # 한국시간 오후 6시 (UTC 09:00)
   workflow_dispatch:         # 수동 실행 버튼
 
 jobs:
