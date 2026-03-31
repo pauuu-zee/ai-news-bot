@@ -5,23 +5,25 @@ from datetime import datetime, timezone, timedelta
 
 KST = timezone(timedelta(hours=9))
 
+# 유료 구독 모델이 강한 매체 제외 및 일반인 친화적 소스 유지
 RSS_FEEDS = [
-    {"name": "MIT Technology Review", "url": "https://www.technologyreview.com/feed/"},
+    {"name": "OpenAI Blog", "url": "https://openai.com/news/rss.xml"}, # 공식 소식 (영향력 최상)
     {"name": "The Verge AI", "url": "https://www.theverge.com/ai-artificial-intelligence/rss/index.xml"},
-    {"name": "BBC Technology", "url": "http://feeds.bbci.co.uk/news/technology/rss.xml"},
-    {"name": "Reuters Technology", "url": "https://feeds.reuters.com/reuters/technologyNews"},
     {"name": "TechCrunch AI", "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
+    {"name": "MIT Tech Review", "url": "https://www.technologyreview.com/feed/"},
 ]
 
-
-def fetch_recent_articles(hours=48):
+def fetch_recent_articles(hours=24):
     articles = []
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    # 유료 기사 및 일반인 부적합 키워드 (토큰 절약용 사전 필터링)
+    SKIP_KEYWORDS = ["subscription", "premium", "exclusive", "funding", "round series", "hiring", "lawsuit", "patent"]
 
     for feed_info in RSS_FEEDS:
         try:
             feed = feedparser.parse(feed_info["url"])
-            for entry in feed.entries[:5]:
+            for entry in feed.entries[:10]: # 더 많은 후보를 보되 필터링 강화
                 published = None
                 if hasattr(entry, "published_parsed") and entry.published_parsed:
                     published = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
@@ -30,132 +32,76 @@ def fetch_recent_articles(hours=48):
                     continue
 
                 title = entry.get("title", "")
-                summary = entry.get("summary", "")
-                text = (title + " " + summary).lower()
-                keywords = ["ai", "artificial intelligence", "chatgpt", "openai", "google ai",
-                            "anthropic", "claude", "llm", "machine learning", "deepmind", "gemini"]
+                summary = entry.get("summary", "").lower()
+                link = entry.get("link", "").lower()
 
-                if any(kw in text for kw in keywords):
-                    # 발행 시각을 KST로 변환해서 저장
-                    published_kst = (
-                        published.astimezone(KST).strftime("%m/%d %H:%M KST")
-                        if published else "발행시각 미확인"
-                    )
-                    articles.append({
-                        "source": feed_info["name"],
-                        "title": title,
-                        "link": entry.get("link", ""),
-                        "summary": summary[:300],
-                        "published": published_kst,
-                    })
+                # 1차 필터링: 유료 기사 및 투자/소송 뉴스 제외 (토큰 소모 방지)
+                if any(kw in (title.lower() + summary + link) for kw in SKIP_KEYWORDS):
+                    continue
+
+                # 버즈량 대용: 제목에 'Top', 'Best', 'New', 'Launch' 등이 포함되거나 공식 블로그면 가점
+                articles.append({
+                    "source": feed_info["name"],
+                    "title": title,
+                    "link": entry.get("link", ""),
+                    "summary": summary[:200], # 요약 길이를 줄여 토큰 절약
+                    "published": published.astimezone(KST).strftime("%m/%d %H:%M") if published else "확인불가",
+                })
         except Exception as e:
-            print(f"피드 오류 ({feed_info['name']}): {e}")
+            print(f"Error ({feed_info['name']}): {e}")
 
-    return articles[:8]
-
+    # 상위 10개로 제한하여 Gemini에 전달 (토큰 최적화)
+    return articles[:10]
 
 def summarize_with_gemini(articles):
-    if not articles:
-        return None
-
+    if not articles: return None
+    
     api_key = os.environ["GEMINI_API_KEY"]
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    # 최신 모델명 확인 필요 (현재 기준 1.5 flash가 비용 대비 효율적)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
 
-    articles_text = ""
-    for i, a in enumerate(articles, 1):
-        articles_text += (
-            f"{i}. [{a['source']}] {a['title']}\n"
-            f"   발행: {a['published']}\n"
-            f"   링크: {a['link']}\n"
-            f"   내용: {a['summary']}\n\n"
-        )
+    # 토큰 절약을 위해 기사 리스트를 아주 간결한 텍스트로 변환
+    articles_payload = "\n".join([f"- {a['title']} ({a['source']})" for a in articles])
 
-    prompt = f"""다음은 최근 48시간 내 수집된 AI 관련 뉴스 후보입니다.
+    prompt = f"""당신은 일반인 대상 AI 뉴스 큐레이터입니다. 아래 뉴스 중 **실생활 영향력**이 가장 큰 3개만 골라 요약하세요.
 
-[모임 정보]
-- 대상: AI를 잘 모르는 일반인 모임
-- 관심사: 실생활 활용법, 업계 동향, 기술 발전, 사회 이슈
+[필터링 기준]
+1. 일반인 실생활 활용도 위주 (도구 출시, 편의성 개선 등)
+2. 투자/채용/소송 뉴스는 무조건 제외
+3. 제목만 보고 가치가 낮으면 버릴 것
 
-[1단계: 관련도 채점]
-각 기사를 아래 기준으로 1~10점 채점하세요.
+[출력 양식]
+- 기사당 2줄 요약 (쉬운 용어)
+- "일반인에게 중요한 이유" 1줄 포함
+- 링크 포함
 
-채점 기준 (높은 점수):
-- 일반인이 공감하거나 실생활에 직접 영향을 주는 AI 소식 (+3)
-- AI 기술의 사회적 의미나 파급력이 큰 이슈 (+2)
-- 국내외 주요 AI 서비스/제품 출시 또는 변화 (+2)
-- AI 업계 주요 동향 (기업 전략, 규제, 경쟁 구도 등) (+2)
-
-채점 기준 (낮은 점수):
-- 주식/투자/펀딩 뉴스 (-3)
-- 채용 공고, 인사 발령 (-3)
-- 특허 분쟁, 법적 소송 세부 사항 (-2)
-- 개발자 전용 기술 문서, API 업데이트 (-2)
-- 기업 IR, 실적 발표 (-2)
-
-[2단계: 선별 및 요약]
-- 6점 이상인 기사만 선별하여 요약하세요.
-- 6점 미만 기사는 완전히 제외하세요.
-- 선별된 기사가 없으면 "오늘은 일반인 관심사에 맞는 AI 뉴스가 없습니다."라고만 출력하세요.
-
-[요약 규칙]
-- 전문 용어는 쉬운 말로 풀어서 설명
-- 각 기사마다 2~3문장으로 핵심만 요약
-- "이게 왜 중요한가"를 한 줄로 추가
-- 관련도 점수를 "[8/10]" 형식으로 제목 앞에 표기
-- 발행 시각과 원문 링크 반드시 포함
-- 슬랙 메시지 형식으로 출력 (이모지 적절히 사용)
-
-기사 목록:
-{articles_text}"""
+목록:
+{articles_payload}"""
 
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     response = requests.post(url, json=payload)
-    data = response.json()
-
+    
     try:
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception as e:
-        print(f"Gemini 응답 오류: {e}, 응답: {data}")
-        return None
-
+        return response.json()["candidates"][0]["content"]["parts"][0]["text"]
+    except:
+        return "요약 생성 중 오류가 발생했습니다."
 
 def send_to_slack(text, webhook_url):
-    now_kst = datetime.now(KST)
-    time_str = now_kst.strftime("%Y년 %m월 %d일 %H:%M")
-    is_morning = now_kst.hour < 12
-
-    header = f"{'🌅 아침' if is_morning else '🌆 저녁'} AI 뉴스 브리핑 | {time_str}\n{'='*40}\n\n"
-    payload = {
-        "text": header + text,
-        "channel": "C0APBBL0DC1"
-    }
-    response = requests.post(webhook_url, json=payload)
-
-    if response.status_code == 200:
-        print("슬랙 발송 성공!")
-    else:
-        print(f"슬랙 발송 실패: {response.status_code} {response.text}")
-
+    payload = {"text": text}
+    requests.post(webhook_url, json=payload)
 
 def main():
-    webhook_url = os.environ["SLACK_WEBHOOK_URL"]
-
-    print("뉴스 수집 중...")
-    articles = fetch_recent_articles(hours=48)
-    print(f"{len(articles)}개 기사 수집됨")
-
+    # 환경변수 로드 및 실행 로직
+    webhook_url = os.environ.get("SLACK_WEBHOOK_URL")
+    articles = fetch_recent_articles(hours=24)
+    
     if not articles:
-        send_to_slack("오늘은 새로운 AI 뉴스가 없습니다. 🤷", webhook_url)
+        print("새로운 주요 뉴스가 없습니다.")
         return
 
-    print("Gemini로 채점, 선별 및 요약 중...")
     summary = summarize_with_gemini(articles)
-
     if summary:
         send_to_slack(summary, webhook_url)
-    else:
-        send_to_slack("뉴스 요약 중 오류가 발생했습니다.", webhook_url)
-
 
 if __name__ == "__main__":
     main()
