@@ -3,7 +3,6 @@ import feedparser
 import requests
 from datetime import datetime, timezone, timedelta
 
-# 신뢰 출처 RSS 목록
 RSS_FEEDS = [
     {"name": "MIT Technology Review", "url": "https://www.technologyreview.com/feed/"},
     {"name": "The Verge AI", "url": "https://www.theverge.com/ai-artificial-intelligence/rss/index.xml"},
@@ -12,7 +11,7 @@ RSS_FEEDS = [
     {"name": "TechCrunch AI", "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
 ]
 
-def fetch_recent_articles(hours=12):
+def fetch_recent_articles(hours=48):
     articles = []
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
@@ -51,7 +50,7 @@ def summarize_with_gemini(articles):
         return None
 
     api_key = os.environ["GEMINI_API_KEY"]
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
 
     articles_text = ""
     for i, a in enumerate(articles, 1):
@@ -87,7 +86,10 @@ def send_to_slack(text, webhook_url):
     is_morning = now_kst.hour < 12
 
     header = f"{'🌅 아침' if is_morning else '🌆 저녁'} AI 뉴스 브리핑 | {time_str}\n{'='*40}\n\n"
-    payload = {"text": header + text, "channel": "C0APBBL0DC1"}
+    payload = {
+        "text": header + text,
+        "channel": "C0APBBL0DC1"
+    }
     response = requests.post(webhook_url, json=payload)
 
     if response.status_code == 200:
@@ -100,7 +102,7 @@ def main():
     webhook_url = os.environ["SLACK_WEBHOOK_URL"]
 
     print("뉴스 수집 중...")
-    articles = fetch_recent_articles(hours=24)
+    articles = fetch_recent_articles(hours=48)
     print(f"{len(articles)}개 기사 수집됨")
 
     if not articles:
