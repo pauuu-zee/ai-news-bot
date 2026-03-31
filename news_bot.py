@@ -87,7 +87,7 @@ def send_to_slack(text, webhook_url):
     is_morning = now_kst.hour < 12
 
     header = f"{'🌅 아침' if is_morning else '🌆 저녁'} AI 뉴스 브리핑 | {time_str}\n{'='*40}\n\n"
-    payload = {"text": header + text}
+    payload = {"text": header + text, "channel": "C0APBBL0DC1"}
     response = requests.post(webhook_url, json=payload)
 
     if response.status_code == 200:
