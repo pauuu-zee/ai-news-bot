@@ -36,6 +36,7 @@ def fetch_recent_articles(hours=48):
                             "anthropic", "claude", "llm", "machine learning", "deepmind", "gemini"]
 
                 if any(kw in text for kw in keywords):
+                    # 발행 시각을 KST로 변환해서 저장
                     published_kst = (
                         published.astimezone(KST).strftime("%m/%d %H:%M KST")
                         if published else "발행시각 미확인"
